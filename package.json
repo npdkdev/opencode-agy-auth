@@ -1,0 +1,73 @@
+{
+    "name": "opencode-agy-auth",
+    "version": "1.0.0",
+    "description": "Fork of opencode-antigravity-auth for OpenCode with OAuth auth, session recovery, strict quota locking, and proxy support.",
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "type": "module",
+    "license": "MIT",
+    "author": "npdkdev",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/npdkdev/opencode-agy-auth.git"
+    },
+    "publishConfig": {
+        "access": "public",
+        "registry": "https://registry.npmjs.org/"
+    },
+    "homepage": "https://github.com/npdkdev/opencode-agy-auth#readme",
+    "bugs": {
+        "url": "https://github.com/npdkdev/opencode-agy-auth/issues"
+    },
+    "keywords": [
+        "opencode",
+        "google",
+        "antigravity",
+        "gemini",
+        "oauth",
+        "plugin",
+        "auth",
+        "claude"
+    ],
+    "engines": {
+        "node": ">=20.0.0"
+    },
+    "files": [
+        "dist/",
+        "README.md",
+        "LICENSE"
+    ],
+    "scripts": {
+        "build": "tsc -p tsconfig.build.json",
+        "build:schema": "npx tsx script/build-schema.ts",
+        "typecheck": "tsc --noEmit",
+        "test": "vitest run",
+        "test:watch": "vitest",
+        "test:ui": "vitest --ui",
+        "test:coverage": "vitest run --coverage",
+        "prepublishOnly": "pnpm run build",
+        "test:e2e:models": "npx tsx script/test-models.ts",
+        "test:e2e:regression": "npx tsx script/test-regression.ts",
+        "release": "npm version patch && git push --follow-tags"
+    },
+    "peerDependencies": {
+        "typescript": "^5"
+    },
+    "devDependencies": {
+        "@types/node": "^24.10.1",
+        "@types/proper-lockfile": "^4.1.4",
+        "@vitest/coverage-v8": "^3.0.0",
+        "@vitest/ui": "^3.0.0",
+        "typescript": "^5.0.0",
+        "vitest": "^3.0.0",
+        "zod-to-json-schema": "^3.25.1"
+    },
+    "dependencies": {
+        "@openauthjs/openauth": "^0.4.3",
+        "@opencode-ai/plugin": "^0.15.30",
+        "proper-lockfile": "^4.1.2",
+        "undici": "^7.22.0",
+        "xdg-basedir": "^5.1.0",
+        "zod": "^4.0.0"
+    }
+}
