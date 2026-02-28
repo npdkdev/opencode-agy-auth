@@ -1,10 +1,18 @@
 # Changelog
 
-## [1.0.0] - 2026-02-28
+## [2.0.0] - 2026-02-28
 
-### Added
+### Base
 
-- Initial standalone release of `opencode-agy-auth`.
-- Fork baseline from `opencode-antigravity-auth` adapted for this repository.
-- Google Antigravity OAuth integration with session recovery and strict quota handling.
-- Multi-account rotation, request transformation, and model compatibility test coverage.
+- Version line is reset above upstream `opencode-antigravity-auth` `v1.6.5-beta.0`.
+- Project is published as `opencode-agy-auth` with fresh standalone repository history.
+
+### Improvements Compared to Upstream `v1.6.5-beta.0`
+
+- Added history-level thinking filtering via `filterThinkingFromHistory()` to sanitize `thoughtSignature` payloads in mixed part types (`src/plugin/request-helpers.ts`, `src/plugin/request-helpers.filter-thinking.test.ts`).
+- Added context truncation and token-pressure controls for request history (`src/plugin/request-helpers.truncation.test.ts`, `src/plugin/request.context-limit.test.ts`).
+- Added explicit thinking-recovery and variant-budget regression coverage (`src/plugin/request.thinking-recovery.test.ts`, `src/plugin/request.variant-budget.test.ts`).
+- Added model-capacity exhaustion handling regression suite (`src/plugin/capacity-exhausted.test.ts`).
+- Added model-limit validation coverage for quota behavior (`src/plugin/quota.model-limits.test.ts`).
+- Expanded platform support validation with Linux-oriented runtime checks (`src/plugin/platform.test.ts`, `src/constants.ts`).
+- Added environment-aware config loading coverage for safer runtime configuration (`src/plugin/config/loader-env.test.ts`).
