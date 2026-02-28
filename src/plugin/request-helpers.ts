@@ -1416,6 +1416,181 @@ export function deepFilterThinkingBlocks(
   return payload;
 }
 
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function hasMeaningfulValue(value: unknown): boolean {
+  if (value === null || value === undefined) {
+    return false
+  }
+
+  if (typeof value === "string") {
+    return value.trim().length > 0
+  }
+
+  if (typeof value === "number") {
+    return Number.isFinite(value)
+  }
+
+  if (typeof value === "boolean") {
+    return true
+  }
+
+  if (Array.isArray(value)) {
+    return value.some((item) => hasMeaningfulValue(item))
+  }
+
+  if (isPlainRecord(value)) {
+    return Object.values(value).some((nested) => hasMeaningfulValue(nested))
+  }
+
+  return true
+}
+
+const NON_PAYLOAD_KEYS = new Set([
+  "thought",
+  "type",
+  "role",
+])
+
+const CORE_PAYLOAD_KEYS = [
+  "functionCall",
+  "functionResponse",
+  "tool_use",
+  "toolUse",
+  "tool_result",
+  "inlineData",
+  "fileData",
+  "executableCode",
+  "codeExecutionResult",
+] as const
+
+function hasMeaningfulPartPayload(part: Record<string, unknown>): boolean {
+  if (typeof part.text === "string" && part.text.trim().length > 0) {
+    return true
+  }
+
+  if (isPlainRecord(part.text) && Object.keys(part.text).length > 0) {
+    return true
+  }
+
+  if (typeof part.thinking === "string" && part.thinking.trim().length > 0) {
+    return true
+  }
+
+  if (isPlainRecord(part.thinking) && Object.keys(part.thinking).length > 0) {
+    return true
+  }
+
+  if (typeof part.signature === "string" && part.signature.trim().length > 0) {
+    return true
+  }
+
+  if (
+    typeof part.thoughtSignature === "string" &&
+    part.thoughtSignature.trim().length > 0
+  ) {
+    return true
+  }
+
+  for (const key of CORE_PAYLOAD_KEYS) {
+    if (hasMeaningfulValue(part[key])) {
+      return true
+    }
+  }
+
+  for (const [key, value] of Object.entries(part)) {
+    if (
+      key === "text" ||
+      key === "thinking" ||
+      key === "signature" ||
+      key === "thoughtSignature" ||
+      NON_PAYLOAD_KEYS.has(key) ||
+      (CORE_PAYLOAD_KEYS as readonly string[]).includes(key)
+    ) {
+      continue
+    }
+
+    if (hasMeaningfulValue(value)) {
+      return true
+    }
+  }
+
+  return false
+}
+
+function sanitizePartsArray(parts: unknown[]): Record<string, unknown>[] {
+  return parts
+    .filter((part): part is Record<string, unknown> => isPlainRecord(part))
+    .filter((part) => hasMeaningfulPartPayload(part))
+}
+
+function sanitizeSystemInstruction(
+  value: unknown,
+): string | Record<string, unknown> | undefined {
+  if (typeof value === "string") {
+    return value.trim().length > 0 ? value : undefined
+  }
+
+  if (!isPlainRecord(value)) {
+    return undefined
+  }
+
+  const systemInstruction = { ...value }
+  if (Array.isArray(systemInstruction.parts)) {
+    const sanitizedParts = sanitizePartsArray(systemInstruction.parts)
+    if (sanitizedParts.length === 0) {
+      return undefined
+    }
+    systemInstruction.parts = sanitizedParts
+    return systemInstruction
+  }
+
+  return undefined
+}
+
+export function sanitizeRequestPayloadParts(
+  payload: Record<string, unknown>,
+): void {
+  if (Array.isArray(payload.contents)) {
+    const sanitizedContents = (payload.contents as unknown[])
+      .filter((content): content is Record<string, unknown> => isPlainRecord(content))
+      .map((content) => {
+        if (!Array.isArray(content.parts)) {
+          return null
+        }
+
+        const sanitizedParts = sanitizePartsArray(content.parts)
+        if (sanitizedParts.length === 0) {
+          return null
+        }
+
+        return {
+          ...content,
+          parts: sanitizedParts,
+        }
+      })
+      .filter((content) => content !== null)
+
+    payload.contents = sanitizedContents
+  }
+
+  const systemInstruction = sanitizeSystemInstruction(payload.systemInstruction)
+  if (systemInstruction === undefined) {
+    delete payload.systemInstruction
+  } else {
+    payload.systemInstruction = systemInstruction
+  }
+
+  const legacySystemInstruction = sanitizeSystemInstruction(payload.system_instruction)
+  if (legacySystemInstruction === undefined) {
+    delete payload.system_instruction
+  } else {
+    payload.system_instruction = legacySystemInstruction
+  }
+}
+
 /**
  * Transforms Gemini-style thought parts (thought: true) and Anthropic-style
  * thinking parts (type: "thinking") to reasoning format.
@@ -2765,6 +2940,98 @@ export function injectToolHardeningInstruction(
       role: "user",
       parts: [instructionPart],
     };
+  }
+}
+
+function injectEphemeralCacheControl(part: Record<string, unknown>): void {
+  if (
+    part.cache_control &&
+    typeof part.cache_control === "object" &&
+    !Array.isArray(part.cache_control)
+  ) {
+    return
+  }
+
+  part.cache_control = { type: "ephemeral" }
+}
+
+function shouldAutoCachePart(part: Record<string, unknown>): boolean {
+  if (part.type === "thinking" || part.thought === true) {
+    return false
+  }
+
+  if (typeof part.text === "string" && part.text.trim().length > 0) {
+    return true
+  }
+
+  if (part.type === "text") {
+    const textValue = part.text
+    if (typeof textValue === "string" && textValue.trim().length > 0) {
+      return true
+    }
+  }
+
+  return false
+}
+
+function autoCacheParts(parts: unknown): void {
+  if (!Array.isArray(parts)) {
+    return
+  }
+
+  for (const part of parts) {
+    if (!part || typeof part !== "object" || Array.isArray(part)) {
+      continue
+    }
+
+    const record = part as Record<string, unknown>
+    if (!shouldAutoCachePart(record)) {
+      continue
+    }
+
+    injectEphemeralCacheControl(record)
+  }
+}
+
+export function injectClaudePromptAutoCaching(
+  payload: Record<string, unknown>,
+): void {
+  const systemInstruction = payload.systemInstruction
+  if (systemInstruction && typeof systemInstruction === "object") {
+    const parts = (systemInstruction as Record<string, unknown>).parts
+    autoCacheParts(parts)
+  }
+
+  if (Array.isArray(payload.contents)) {
+    for (const item of payload.contents) {
+      if (!item || typeof item !== "object" || Array.isArray(item)) {
+        continue
+      }
+
+      const content = item as Record<string, unknown>
+      const role = content.role
+      if (role === "model" || role === "assistant") {
+        continue
+      }
+
+      autoCacheParts(content.parts)
+    }
+  }
+
+  if (Array.isArray(payload.messages)) {
+    for (const item of payload.messages) {
+      if (!item || typeof item !== "object" || Array.isArray(item)) {
+        continue
+      }
+
+      const message = item as Record<string, unknown>
+      const role = message.role
+      if (role === "assistant" || role === "model") {
+        continue
+      }
+
+      autoCacheParts(message.content)
+    }
   }
 }
 

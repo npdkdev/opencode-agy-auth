@@ -2,8 +2,8 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-const CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "";
-const CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "";
+const CLIENT_ID = "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com";
+const CLIENT_SECRET = "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";
 const CLOUD_CODE_BASE = "https://cloudcode-pa.googleapis.com";
 const USER_AGENT = "antigravity/windows/amd64";
 const FALLBACK_PROJECT_ID = "bamboo-precept-lgxtn";
@@ -176,6 +176,7 @@ async function run() {
         body,
       );
       console.log(`   fetchAvailableModels: ${response.status}`);
+      console.log(JSON.stringify(await response.clone().json().catch(() => ({})), null, 2));
 
       if (!response.ok) {
         const text = await response.text().catch(() => "");

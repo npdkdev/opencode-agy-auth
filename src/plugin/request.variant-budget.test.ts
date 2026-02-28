@@ -11,7 +11,7 @@ const CLAUDE_LOW_TIER_URL =
 
 function createLimits(overrides: Partial<ModelLimits> = {}): ModelLimits {
   return {
-    claude_context_limit: 100_000,
+    claude_context_limit: 200_000,
     claude_thinking_budget_max: 32_768,
     gemini_context_limit: 1_000_000,
     ...overrides,

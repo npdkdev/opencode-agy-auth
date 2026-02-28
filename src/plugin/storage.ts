@@ -200,7 +200,12 @@ export interface AccountMetadataV3 {
   verificationRequiredReason?: string;
   verificationUrl?: string;
   /** Cached soft quota data */
-  cachedQuota?: Record<string, Array<{ model: string; remainingFraction: number; resetTime?: string }>>;
+  cachedQuota?: Record<string, Array<{
+    model: string;
+    modelName?: string;
+    remainingFraction: number;
+    resetTime?: number;
+  }>>;
   cachedQuotaUpdatedAt?: number;
 }
 

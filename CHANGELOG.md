@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.1.0] - 2026-03-01
+
+### Added
+
+- Added `claude_prompt_auto_caching` config support (file/env) to auto-inject `cache_control: { type: "ephemeral" }` for Claude prompt blocks.
+- Added `debug_log_retention_days` config support and startup cleanup for old debug log files.
+
+### Changed
+
+- Stripped `x-goog-user-project` consistently across Antigravity and Gemini CLI request styles to avoid project-header permission conflicts.
+- Added request payload sanitization for invalid/empty `contents[].parts` and `systemInstruction.parts` before forwarding.
+- Hardened non-streaming response transform fallback with clone-safe body reads to avoid consumed-body failures.
+- Synced config documentation keys across `src/plugin/config/schema.ts` and `assets/antigravity.schema.json` (including `debug_tui` and `model_limits`).
+
 ## [2.0.0] - 2026-02-28
 
 ### Base

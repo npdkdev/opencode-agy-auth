@@ -142,6 +142,10 @@ function applyEnvOverrides(config: AntigravityConfig): AntigravityConfig {
     // OPENCODE_ANTIGRAVITY_LOG_DIR=/path/to/logs
     log_dir: env.OPENCODE_ANTIGRAVITY_LOG_DIR || config.log_dir,
 
+    debug_log_retention_days: env.OPENCODE_ANTIGRAVITY_DEBUG_LOG_RETENTION_DAYS
+      ? parseInt(env.OPENCODE_ANTIGRAVITY_DEBUG_LOG_RETENTION_DAYS, 10)
+      : config.debug_log_retention_days,
+
     // OPENCODE_ANTIGRAVITY_SESSION_RECOVERY=0 to disable
     session_recovery:
       env.OPENCODE_ANTIGRAVITY_SESSION_RECOVERY === "0" ||
@@ -168,6 +172,15 @@ function applyEnvOverrides(config: AntigravityConfig): AntigravityConfig {
       env.OPENCODE_ANTIGRAVITY_AUTO_UPDATE === "false"
         ? false
         : config.auto_update,
+
+    claude_prompt_auto_caching:
+      env.OPENCODE_ANTIGRAVITY_CLAUDE_PROMPT_AUTO_CACHING === "1" ||
+      env.OPENCODE_ANTIGRAVITY_CLAUDE_PROMPT_AUTO_CACHING === "true"
+        ? true
+        : env.OPENCODE_ANTIGRAVITY_CLAUDE_PROMPT_AUTO_CACHING === "0" ||
+            env.OPENCODE_ANTIGRAVITY_CLAUDE_PROMPT_AUTO_CACHING === "false"
+          ? false
+          : config.claude_prompt_auto_caching,
 
     // OPENCODE_ANTIGRAVITY_ACCOUNT_SELECTION_STRATEGY=sticky|round-robin|hybrid
     account_selection_strategy:

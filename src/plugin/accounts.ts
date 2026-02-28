@@ -19,6 +19,7 @@ import {
 } from "./rotation";
 import {
   generateFingerprint,
+  updateFingerprintVersion,
   type Fingerprint,
   type FingerprintVersion,
   MAX_FINGERPRINT_HISTORY,
@@ -202,22 +203,55 @@ interface LegacyQuotaGroupSummary {
   modelCount: number;
 }
 
-function isQuotaModelEntry(value: unknown): value is QuotaModelEntry {
+interface StoredQuotaModelEntry {
+  model?: unknown;
+  displayName?: unknown;
+  modelName?: unknown;
+  remainingFraction?: unknown;
+  resetTime?: unknown;
+}
+
+interface ValidStoredQuotaModelEntry {
+  model?: string;
+  displayName?: string;
+  modelName?: string;
+  remainingFraction: number;
+  resetTime?: string | number;
+}
+
+const QUOTA_GROUP_DEFAULT_MODEL: Record<QuotaGroup, string> = {
+  claude: "claude-sonnet-4-6-thinking",
+  "gemini-pro": "gemini-3.1-pro",
+  "gemini-flash": "gemini-3-flash",
+}
+
+const QUOTA_MODEL_ALIASES = new Set([
+  "claude",
+  "gemini",
+  "gemini-pro",
+  "gemini-flash",
+])
+
+function isQuotaModelEntry(value: unknown): value is ValidStoredQuotaModelEntry {
   if (!value || typeof value !== "object") {
     return false;
   }
 
-  const entry = value as {
-    model?: unknown;
-    remainingFraction?: unknown;
-    resetTime?: unknown;
-  };
+  const entry = value as StoredQuotaModelEntry;
+  const model =
+    typeof entry.modelName === "string"
+      ? entry.modelName
+      : typeof entry.model === "string"
+        ? entry.model
+        : undefined;
 
   return (
-    typeof entry.model === "string" &&
+    typeof model === "string" &&
     typeof entry.remainingFraction === "number" &&
     Number.isFinite(entry.remainingFraction) &&
-    (entry.resetTime === undefined || typeof entry.resetTime === "string")
+    (entry.resetTime === undefined ||
+      typeof entry.resetTime === "string" ||
+      (typeof entry.resetTime === "number" && Number.isFinite(entry.resetTime)))
   );
 }
 
@@ -239,6 +273,220 @@ function isLegacyQuotaGroupSummary(value: unknown): value is LegacyQuotaGroupSum
         Number.isFinite(summary.remainingFraction))) &&
     (summary.resetTime === undefined || typeof summary.resetTime === "string")
   );
+}
+
+function isQuotaGroup(value: string): value is QuotaGroup {
+  return value === "claude" || value === "gemini-pro" || value === "gemini-flash"
+}
+
+function clampFraction(value: number): number {
+  if (value < 0) return 0
+  if (value > 1) return 1
+  return value
+}
+
+function isLikelyQuotaModelIdentifier(value: string): boolean {
+  const normalized = value.trim().toLowerCase()
+  return normalized.length > 0 && /^[a-z0-9][a-z0-9._-]*$/.test(normalized)
+}
+
+function getStoredQuotaModelName(entry: StoredQuotaModelEntry): string {
+  if (typeof entry.model === "string" && entry.model.trim().length > 0) {
+    return entry.model
+  }
+
+  if (
+    typeof entry.modelName === "string" &&
+    isLikelyQuotaModelIdentifier(entry.modelName)
+  ) {
+    return entry.modelName
+  }
+
+  return ""
+}
+
+function getStoredQuotaDisplayName(entry: StoredQuotaModelEntry): string | undefined {
+  if (typeof entry.displayName === "string") {
+    const normalizedDisplayName = entry.displayName.trim()
+    if (normalizedDisplayName.length > 0) {
+      return normalizedDisplayName
+    }
+  }
+
+  if (typeof entry.modelName !== "string") {
+    return undefined
+  }
+
+  const normalized = entry.modelName.trim()
+  return normalized.length > 0 ? normalized : undefined
+}
+
+function normalizeQuotaModelName(
+  group: QuotaGroup,
+  model: string,
+  preferredModels: string[],
+): string {
+  const normalized = model.trim()
+  const normalizedLower = normalized.toLowerCase()
+  if (normalized && !QUOTA_MODEL_ALIASES.has(normalizedLower)) {
+    return normalized
+  }
+
+  const preferred = preferredModels.find((candidate) => candidate.length > 0)
+  if (preferred) {
+    return preferred
+  }
+
+  return QUOTA_GROUP_DEFAULT_MODEL[group]
+}
+
+function normalizeQuotaEntries(group: QuotaGroup, value: unknown): QuotaModelEntry[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  const entries = value.filter(isQuotaModelEntry)
+  if (entries.length === 0) {
+    return []
+  }
+
+  const preferredModels = entries
+    .map((entry) => getStoredQuotaModelName(entry).trim())
+    .filter((model) => model.length > 0 && !QUOTA_MODEL_ALIASES.has(model.toLowerCase()))
+
+  return entries.map((entry) => {
+    const model = normalizeQuotaModelName(
+      group,
+      getStoredQuotaModelName(entry),
+      preferredModels,
+    )
+    const displayName = getStoredQuotaDisplayName(entry)
+
+    return {
+      model,
+      displayName:
+        displayName && displayName !== model
+          ? displayName
+          : undefined,
+      remainingFraction: clampFraction(entry.remainingFraction),
+      resetTime: normalizeQuotaResetTime(entry.resetTime),
+    }
+  })
+}
+
+function normalizeQuotaResetTime(resetTime: unknown): string | undefined {
+  if (typeof resetTime === "string") {
+    const parsed = Date.parse(resetTime)
+    return Number.isFinite(parsed) ? resetTime : undefined
+  }
+
+  if (typeof resetTime === "number" && Number.isFinite(resetTime)) {
+    const date = new Date(resetTime)
+    const ms = date.getTime()
+    return Number.isFinite(ms) ? date.toISOString() : undefined
+  }
+
+  return undefined
+}
+
+function serializeQuotaResetTime(resetTime: string | number | undefined): number | undefined {
+  if (typeof resetTime === "number" && Number.isFinite(resetTime)) {
+    return resetTime
+  }
+
+  if (!resetTime) {
+    return undefined
+  }
+
+  if (typeof resetTime !== "string") {
+    return undefined
+  }
+
+  const parsed = Date.parse(resetTime)
+  return Number.isFinite(parsed) ? parsed : undefined
+}
+
+function serializeQuotaGroupsForStorage(
+  cachedQuota: Partial<Record<QuotaGroup, QuotaModelEntry[]>> | undefined,
+): Record<string, Array<{
+  model: string;
+  modelName: string;
+  remainingFraction: number;
+  resetTime?: number;
+}>> | undefined {
+  const normalized = normalizeQuotaGroups(
+    cachedQuota as Record<string, unknown> | undefined,
+  )
+
+  if (!normalized) {
+    return undefined
+  }
+
+  const serialized: Record<string, Array<{
+    model: string;
+    modelName: string;
+    remainingFraction: number;
+    resetTime?: number;
+  }>> = {}
+
+  for (const [group, entries] of Object.entries(normalized)) {
+    serialized[group] = entries.map((entry) => ({
+      model: entry.model,
+      modelName:
+        typeof entry.displayName === "string" && entry.displayName.trim().length > 0
+          ? entry.displayName.trim()
+          : entry.model,
+      remainingFraction: clampFraction(entry.remainingFraction),
+      resetTime: serializeQuotaResetTime(entry.resetTime),
+    }))
+  }
+
+  return Object.keys(serialized).length > 0 ? serialized : undefined
+}
+
+function normalizeQuotaGroups(
+  cachedQuota: Record<string, unknown> | undefined,
+): Partial<Record<QuotaGroup, QuotaModelEntry[]>> | undefined {
+  if (!cachedQuota) {
+    return undefined
+  }
+
+  const normalized: Partial<Record<QuotaGroup, QuotaModelEntry[]>> = {}
+
+  for (const [group, value] of Object.entries(cachedQuota)) {
+    if (!isQuotaGroup(group)) {
+      continue
+    }
+
+    const entries = normalizeQuotaEntries(group, value)
+    if (entries.length > 0) {
+      normalized[group] = entries
+      continue
+    }
+
+    if (isLegacyQuotaGroupSummary(value)) {
+      normalized[group] = [{
+        model: QUOTA_GROUP_DEFAULT_MODEL[group],
+        remainingFraction: clampFraction(value.remainingFraction ?? 1),
+        resetTime: value.resetTime,
+      }]
+    }
+  }
+
+  return Object.keys(normalized).length > 0 ? normalized : undefined
+}
+
+function ensureCurrentFingerprintVersion(
+  fingerprint: Fingerprint | undefined,
+): { fingerprint: Fingerprint; changed: boolean } {
+  if (!fingerprint) {
+    return { fingerprint: generateFingerprint(), changed: true }
+  }
+
+  return {
+    fingerprint,
+    changed: updateFingerprintVersion(fingerprint),
+  }
 }
 
 function nowMs(): number {
@@ -443,6 +691,7 @@ export function computeSoftQuotaCacheTtlMs(
 export class AccountManager {
   private accounts: ManagedAccount[] = [];
   private cursor = 0;
+  private requiresPersistenceAfterLoad = false;
   private currentAccountIndexByFamily: Record<ModelFamily, number> = {
     claude: -1,
     gemini: -1,
@@ -462,7 +711,12 @@ export class AccountManager {
     authFallback?: OAuthAuthDetails,
   ): Promise<AccountManager> {
     const stored = await loadAccounts();
-    return new AccountManager(authFallback, stored);
+    const manager = new AccountManager(authFallback, stored);
+    if (manager.requiresPersistenceAfterLoad && manager.getAccountCount() > 0) {
+      manager.requestSaveToDisk();
+      manager.requiresPersistenceAfterLoad = false;
+    }
+    return manager;
   }
 
   constructor(
@@ -486,6 +740,15 @@ export class AccountManager {
           if (!acc.refreshToken || typeof acc.refreshToken !== "string") {
             return null;
           }
+
+          const {
+            fingerprint,
+            changed: fingerprintChanged,
+          } = ensureCurrentFingerprintVersion(acc.fingerprint)
+          if (fingerprintChanged) {
+            this.requiresPersistenceAfterLoad = true
+          }
+
           const matchesFallback = !!(
             authFallback &&
             authParts &&
@@ -511,36 +774,9 @@ export class AccountManager {
             coolingDownUntil: acc.coolingDownUntil,
             cooldownReason: acc.cooldownReason,
             touchedForQuota: {},
-            fingerprint: acc.fingerprint ?? generateFingerprint(),
+            fingerprint,
             fingerprintHistory: acc.fingerprintHistory ?? [],
-            cachedQuota: (() => {
-              if (!acc.cachedQuota) {
-                return undefined;
-              }
-
-              const migrated: Partial<Record<QuotaGroup, QuotaModelEntry[]>> = {};
-              for (const [group, value] of Object.entries(
-                acc.cachedQuota as Record<string, unknown>,
-              )) {
-                if (Array.isArray(value)) {
-                  const entries = value.filter(isQuotaModelEntry);
-                  if (entries.length > 0) {
-                    migrated[group as QuotaGroup] = entries;
-                  }
-                  continue;
-                }
-
-                if (isLegacyQuotaGroupSummary(value)) {
-                  migrated[group as QuotaGroup] = [{
-                    model: group,
-                    remainingFraction: value.remainingFraction ?? 1,
-                    resetTime: value.resetTime,
-                  }];
-                }
-              }
-
-              return Object.keys(migrated).length > 0 ? migrated : undefined;
-            })(),
+            cachedQuota: normalizeQuotaGroups(acc.cachedQuota as Record<string, unknown> | undefined),
             cachedQuotaUpdatedAt: acc.cachedQuotaUpdatedAt,
             verificationRequired: acc.verificationRequired,
             verificationRequiredAt: acc.verificationRequiredAt,
@@ -588,6 +824,8 @@ export class AccountManager {
           enabled: true,
           rateLimitResetTimes: {},
           touchedForQuota: {},
+          fingerprint: generateFingerprint(),
+          fingerprintHistory: [],
         };
         this.accounts.push(newAccount);
         // Update indices to include the new account
@@ -618,6 +856,8 @@ export class AccountManager {
             enabled: true,
             rateLimitResetTimes: {},
             touchedForQuota: {},
+            fingerprint: generateFingerprint(),
+            fingerprintHistory: [],
           },
         ];
         this.cursor = 0;
@@ -1300,10 +1540,7 @@ export class AccountManager {
         fingerprintHistory: a.fingerprintHistory?.length
           ? a.fingerprintHistory
           : undefined,
-        cachedQuota:
-          a.cachedQuota && Object.keys(a.cachedQuota).length > 0
-            ? a.cachedQuota
-            : undefined,
+        cachedQuota: serializeQuotaGroupsForStorage(a.cachedQuota),
         cachedQuotaUpdatedAt: a.cachedQuotaUpdatedAt,
         verificationRequired: a.verificationRequired,
         verificationRequiredAt: a.verificationRequiredAt,
@@ -1438,8 +1675,9 @@ export class AccountManager {
       }
     }
 
-    // Restore the fingerprint
-    account.fingerprint = { ...fingerprintToRestore, createdAt: nowMs() };
+    const restoredFingerprint = { ...fingerprintToRestore, createdAt: nowMs() }
+    updateFingerprintVersion(restoredFingerprint)
+    account.fingerprint = restoredFingerprint;
 
     this.requestSaveToDisk();
 
@@ -1465,7 +1703,9 @@ export class AccountManager {
   ): void {
     const account = this.accounts[accountIndex];
     if (account) {
-      account.cachedQuota = quotaGroups;
+      account.cachedQuota = normalizeQuotaGroups(
+        quotaGroups as Record<string, unknown>,
+      )
       account.cachedQuotaUpdatedAt = nowMs();
     }
   }

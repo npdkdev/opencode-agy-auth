@@ -33,6 +33,7 @@ const SDK_CLIENTS = [
   "google-cloud-sdk vscode/1.86.0",
   "google-cloud-sdk vscode/1.87.0",
   "google-cloud-sdk vscode/1.96.0",
+  "google-cloud-sdk vscode/1.107.0",
 ];
 
 export interface ClientMetadata {

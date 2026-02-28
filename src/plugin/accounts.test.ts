@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AccountManager, type ModelFamily, type HeaderStyle, parseRateLimitReason, calculateBackoffMs, type RateLimitReason, resolveQuotaGroup } from "./accounts";
-import type { AccountStorageV4 } from "./storage";
+import { getAntigravityVersion } from "../constants";
+import { saveAccounts, type AccountStorageV4 } from "./storage";
 import type { OAuthAuthDetails } from "./types";
 
 // Mock storage to prevent test data from leaking to real config files
@@ -18,6 +19,219 @@ describe("AccountManager", () => {
   beforeEach(() => {
     vi.useRealTimers();
     vi.stubGlobal("process", { ...process, pid: 0 });
+    vi.mocked(saveAccounts).mockClear();
+  });
+
+  describe("cached quota normalization", () => {
+    it("normalizes alias model names from stored cachedQuota on load", () => {
+      const stored: AccountStorageV4 = {
+        version: 4,
+        accounts: [
+          {
+            refreshToken: "r1",
+            addedAt: 1,
+            lastUsed: 0,
+            cachedQuota: {
+              claude: [{ model: "claude", remainingFraction: 0.4 }],
+              "gemini-pro": [{ model: "gemini-pro", remainingFraction: 0.5 }],
+              "gemini-flash": [{ model: "gemini-flash", remainingFraction: 0.6 }],
+            },
+            cachedQuotaUpdatedAt: Date.now(),
+          },
+        ],
+        activeIndex: 0,
+      };
+
+      const manager = new AccountManager(undefined, stored);
+      const account = manager.getAccountsSnapshot()[0];
+
+      expect(account?.cachedQuota?.claude?.[0]?.model).toBe("claude-sonnet-4-6-thinking");
+      expect(account?.cachedQuota?.["gemini-pro"]?.[0]?.model).toBe("gemini-3.1-pro");
+      expect(account?.cachedQuota?.["gemini-flash"]?.[0]?.model).toBe("gemini-3-flash");
+    });
+
+    it("prefers concrete model names when normalizing mixed cachedQuota entries", () => {
+      const stored: AccountStorageV4 = {
+        version: 4,
+        accounts: [
+          {
+            refreshToken: "r1",
+            addedAt: 1,
+            lastUsed: 0,
+          },
+        ],
+        activeIndex: 0,
+      };
+
+      const manager = new AccountManager(undefined, stored);
+      manager.updateQuotaCache(0, {
+        "gemini-pro": [
+          { model: "gemini-pro", remainingFraction: 0.4 },
+          { model: "gemini-3.1-pro", remainingFraction: 0.3 },
+        ],
+      });
+
+      const account = manager.getAccountsSnapshot()[0];
+      const entries = account?.cachedQuota?.["gemini-pro"];
+      expect(entries?.[0]?.model).toBe("gemini-3.1-pro");
+      expect(entries?.[1]?.model).toBe("gemini-3.1-pro");
+    });
+
+    it("persists normalized cachedQuota model names on save", async () => {
+      const stored: AccountStorageV4 = {
+        version: 4,
+        accounts: [
+          {
+            refreshToken: "r1",
+            addedAt: 1,
+            lastUsed: 0,
+          },
+        ],
+        activeIndex: 0,
+      };
+
+      const manager = new AccountManager(undefined, stored);
+      manager.updateQuotaCache(0, {
+        claude: [{
+          model: "claude",
+          displayName: "Claude Sonnet 4.6 Thinking",
+          remainingFraction: 0.2,
+          resetTime: "2026-03-01T00:00:00Z",
+        }],
+        "gemini-pro": [{ model: "gemini-pro", remainingFraction: 0.3 }],
+      });
+
+      await manager.saveToDisk();
+
+      const call = vi.mocked(saveAccounts).mock.calls[0];
+      const saved = call?.[0];
+
+      expect(saved?.accounts[0]?.cachedQuota?.claude?.[0]?.model).toBe("claude-sonnet-4-6-thinking");
+      expect(saved?.accounts[0]?.cachedQuota?.claude?.[0]?.modelName).toBe("Claude Sonnet 4.6 Thinking");
+      expect(saved?.accounts[0]?.cachedQuota?.claude?.[0]?.resetTime).toBe(
+        Date.parse("2026-03-01T00:00:00Z"),
+      );
+      expect(saved?.accounts[0]?.cachedQuota?.["gemini-pro"]?.[0]?.model).toBe("gemini-3.1-pro");
+    });
+
+    it("loads cachedQuota resetTime timestamp and modelName from storage", () => {
+      const stored: AccountStorageV4 = {
+        version: 4,
+        accounts: [
+          {
+            refreshToken: "r1",
+            addedAt: 1,
+            lastUsed: 0,
+            cachedQuota: {
+              claude: [{
+                model: "claude",
+                modelName: "Claude Sonnet 4.6 Thinking",
+                remainingFraction: 0.4,
+                resetTime: Date.parse("2026-04-01T10:00:00Z"),
+              }],
+            },
+            cachedQuotaUpdatedAt: Date.now(),
+          },
+        ],
+        activeIndex: 0,
+      }
+
+      const manager = new AccountManager(undefined, stored)
+      const account = manager.getAccountsSnapshot()[0]
+
+      expect(account?.cachedQuota?.claude?.[0]?.model).toBe("claude-sonnet-4-6-thinking")
+      expect(account?.cachedQuota?.claude?.[0]?.displayName).toBe("Claude Sonnet 4.6 Thinking")
+      expect(account?.cachedQuota?.claude?.[0]?.resetTime).toBe("2026-04-01T10:00:00.000Z")
+    })
+  });
+
+  describe("fingerprint version normalization", () => {
+    it("normalizes stale fingerprint userAgent version on load", () => {
+      const stored: AccountStorageV4 = {
+        version: 4,
+        accounts: [
+          {
+            refreshToken: "r1",
+            projectId: "p1",
+            addedAt: 1,
+            lastUsed: 0,
+            fingerprint: {
+              deviceId: "dev-1",
+              sessionToken: "session-1",
+              userAgent: "antigravity/0.0.1 darwin/arm64",
+              apiClient: "google-cloud-sdk vscode_cloudshelleditor/0.1",
+              clientMetadata: {
+                ideType: "ANTIGRAVITY",
+                platform: "MACOS",
+                pluginType: "GEMINI",
+              },
+              createdAt: 1,
+            },
+          },
+        ],
+        activeIndex: 0,
+      };
+
+      const manager = new AccountManager(undefined, stored);
+      const account = manager.getAccountsSnapshot()[0];
+
+      expect(account?.fingerprint?.deviceId).toBe("dev-1");
+      expect(account?.fingerprint?.userAgent).toBe(
+        `antigravity/${getAntigravityVersion()} darwin/arm64`,
+      );
+    });
+
+    it("persists normalized fingerprint userAgent on save", async () => {
+      const stored: AccountStorageV4 = {
+        version: 4,
+        accounts: [
+          {
+            refreshToken: "r1",
+            projectId: "p1",
+            addedAt: 1,
+            lastUsed: 0,
+            fingerprint: {
+              deviceId: "dev-1",
+              sessionToken: "session-1",
+              userAgent: "antigravity/0.0.1 darwin/arm64",
+              apiClient: "google-cloud-sdk vscode_cloudshelleditor/0.1",
+              clientMetadata: {
+                ideType: "ANTIGRAVITY",
+                platform: "MACOS",
+                pluginType: "GEMINI",
+              },
+              createdAt: 1,
+            },
+          },
+        ],
+        activeIndex: 0,
+      };
+
+      const manager = new AccountManager(undefined, stored);
+      await manager.saveToDisk();
+
+      const call = vi.mocked(saveAccounts).mock.calls[0];
+      const saved = call?.[0];
+
+      expect(saved?.accounts[0]?.fingerprint?.userAgent).toBe(
+        `antigravity/${getAntigravityVersion()} darwin/arm64`,
+      );
+    });
+
+    it("creates per-account fingerprint for auth fallback bootstrap", () => {
+      const fallback: OAuthAuthDetails = {
+        type: "oauth",
+        refresh: "r1|p1",
+        access: "access",
+        expires: 123,
+      };
+
+      const manager = new AccountManager(fallback, undefined);
+      const account = manager.getAccountsSnapshot()[0];
+
+      expect(account?.fingerprint).toBeDefined();
+      expect(account?.fingerprintHistory).toEqual([]);
+    });
   });
 
   it("treats on-disk storage as source of truth, even when empty", () => {

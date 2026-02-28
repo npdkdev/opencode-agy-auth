@@ -27,7 +27,7 @@ function buildInit(textSize: number): RequestInit {
 
 function createLimits(overrides: Partial<ModelLimits> = {}): ModelLimits {
   return {
-    claude_context_limit: 100_000,
+    claude_context_limit: 200_000,
     claude_thinking_budget_max: 32_768,
     gemini_context_limit: 1_000_000,
     ...overrides,
@@ -42,23 +42,22 @@ async function getOverflowText(response?: Response): Promise<string> {
 }
 
 describe("prepareAntigravityRequest context limits", () => {
-  it("uses claude_context_limit from modelLimits instead of 200,000", async () => {
+  it("uses claude_context_limit from modelLimits", async () => {
     const result = prepareAntigravityRequest(
       CLAUDE_URL,
-      buildInit(460_000),
+      buildInit(900_000),
       ACCESS_TOKEN,
       PROJECT_ID,
       undefined,
       "antigravity",
       false,
       undefined,
-      createLimits({ claude_context_limit: 100_000 }),
+      createLimits({ claude_context_limit: 200_000 }),
     );
 
     const text = await getOverflowText(result.contextOverflowResponse);
     expect(result.contextOverflowResponse).toBeDefined();
-    expect(text).toContain("100,000 token limit");
-    expect(text).not.toContain("200,000 token limit");
+    expect(text).toContain("200,000 token limit");
   });
 
   it("applies effectiveLimit as HARD_LIMIT - thinkingBudget - 5,000", () => {
@@ -77,17 +76,17 @@ describe("prepareAntigravityRequest context limits", () => {
     expect(result.contextOverflowResponse).toBeDefined();
   });
 
-  it("computes overBy against HARD_LIMIT (no negative overflow for <200k payload)", async () => {
+  it("computes overBy against HARD_LIMIT without negative overflow", async () => {
     const result = prepareAntigravityRequest(
       CLAUDE_URL,
-      buildInit(460_000),
+      buildInit(900_000),
       ACCESS_TOKEN,
       PROJECT_ID,
       undefined,
       "antigravity",
       false,
       undefined,
-      createLimits({ claude_context_limit: 100_000 }),
+      createLimits({ claude_context_limit: 200_000 }),
     );
 
     const text = await getOverflowText(result.contextOverflowResponse);

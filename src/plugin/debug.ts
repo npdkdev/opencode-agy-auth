@@ -1,4 +1,4 @@
-import { createWriteStream, mkdirSync } from "node:fs";
+import { createWriteStream, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { env } from "node:process";
@@ -7,6 +7,9 @@ import { ensureGitignoreSync } from "./storage";
 
 const MAX_BODY_PREVIEW_CHARS = 12000;
 const MAX_BODY_VERBOSE_CHARS = 50000;
+const DEBUG_LOG_PREFIX = "antigravity-debug-";
+const DEBUG_LOG_SUFFIX = ".log";
+const DEFAULT_DEBUG_LOG_RETENTION_DAYS = 14;
 
 export const DEBUG_MESSAGE_PREFIX = "[opencode-agy-auth debug]";
 
@@ -70,7 +73,40 @@ function getLogsDir(customLogDir?: string): string {
  */
 function createLogFilePath(customLogDir?: string): string {
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-  return join(getLogsDir(customLogDir), `antigravity-debug-${timestamp}.log`);
+  return join(getLogsDir(customLogDir), `${DEBUG_LOG_PREFIX}${timestamp}${DEBUG_LOG_SUFFIX}`);
+}
+
+function cleanupOldDebugLogs(customLogDir: string | undefined, retentionDays: number): void {
+  if (retentionDays <= 0) {
+    return;
+  }
+
+  const logsDir = getLogsDir(customLogDir);
+  const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
+
+  try {
+    const entries = readdirSync(logsDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isFile()) {
+        continue;
+      }
+
+      if (
+        !entry.name.startsWith(DEBUG_LOG_PREFIX) ||
+        !entry.name.endsWith(DEBUG_LOG_SUFFIX)
+      ) {
+        continue;
+      }
+
+      const filePath = join(logsDir, entry.name);
+      const stats = statSync(filePath);
+      if (stats.mtimeMs < cutoff) {
+        unlinkSync(filePath);
+      }
+    }
+  } catch {
+    return;
+  }
 }
 
 /**
@@ -108,6 +144,14 @@ export function initializeDebug(config: AntigravityConfig): void {
     : parseDebugLevel(envDebugFlag);
   const debugEnabled = debugLevel >= 1;
   const verboseEnabled = debugLevel >= 2;
+  const retentionDays = Number.isFinite(config.debug_log_retention_days)
+    ? config.debug_log_retention_days
+    : DEFAULT_DEBUG_LOG_RETENTION_DAYS;
+
+  if (debugEnabled) {
+    cleanupOldDebugLogs(config.log_dir, retentionDays);
+  }
+
   const logFilePath = debugEnabled
     ? createLogFilePath(config.log_dir)
     : undefined;
@@ -137,6 +181,9 @@ function getDebugState(): DebugState {
     const debugLevel = parseDebugLevel(envDebugFlag);
     const debugEnabled = debugLevel >= 1;
     const verboseEnabled = debugLevel >= 2;
+    if (debugEnabled) {
+      cleanupOldDebugLogs(undefined, DEFAULT_DEBUG_LOG_RETENTION_DAYS);
+    }
     const logFilePath = debugEnabled ? createLogFilePath() : undefined;
     const logWriter = createLogWriter(logFilePath);
 

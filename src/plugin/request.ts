@@ -44,10 +44,12 @@ import {
   applyToolPairingFixes,
   createSyntheticErrorResponse,
   injectParameterSignatures,
+  injectClaudePromptAutoCaching,
   injectToolHardeningInstruction,
   isThinkingCapableModel,
   normalizeThinkingConfig,
   parseAntigravityApiBody,
+  sanitizeRequestPayloadParts,
   resolveThinkingConfig,
   rewriteAntigravityPreviewAccessError,
   transformThinkingParts,
@@ -668,6 +670,7 @@ export function isGenerativeLanguageRequest(input: RequestInfo): input is string
 export interface PrepareRequestOptions {
   /** Enable Claude tool hardening (parameter signatures + system instruction). Default: true */
   claudeToolHardening?: boolean;
+  claudePromptAutoCaching?: boolean;
   /** Google Search configuration (global default) */
   googleSearch?: GoogleSearchConfig;
   /** Per-account fingerprint for rate limit mitigation. Falls back to session fingerprint if not provided. */
@@ -725,13 +728,7 @@ export function prepareAntigravityRequest(
 
   headers.set("Authorization", `Bearer ${accessToken}`);
   headers.delete("x-api-key");
-  if (headerStyle === "antigravity") {
-    // Strip x-goog-user-project header to prevent 403 PERMISSION_DENIED errors.
-    // This header is added by OpenCode/AI SDK but causes auth conflicts on ALL endpoints
-    // (Daily, Autopush, Prod) when the user's GCP project doesn't have Cloud Code API enabled.
-    // Error: "Cloud Code Private API has not been used in project {user_project} before or it is disabled"
-    headers.delete("x-goog-user-project");
-  }
+  headers.delete("x-goog-user-project");
 
   const match = input.match(/\/models\/([^:]+):(\w+)/);
   if (!match) {
@@ -849,6 +846,7 @@ export function prepareAntigravityRequest(
         }
 
         for (const req of requestObjects) {
+          sanitizeRequestPayloadParts(req);
           // Use stable session ID for signature caching across multi-turn conversations
           (req as any).sessionId = signatureSessionKey;
           stripInjectedDebugFromRequestPayload(req as Record<string, unknown>);
@@ -876,6 +874,12 @@ export function prepareAntigravityRequest(
             // We need to re-inject it by copying from the thinking part to the functionCall part in the same block.
             sanitizeRequestPayloadForAntigravity(req as Record<string, unknown>, signatureSessionKey);
           }
+
+          if (isClaude && options?.claudePromptAutoCaching) {
+            injectClaudePromptAutoCaching(req);
+          }
+
+          sanitizeRequestPayloadParts(req);
         }
 
         if (isClaudeThinking && sessionId) {
@@ -894,6 +898,7 @@ export function prepareAntigravityRequest(
         body = JSON.stringify(wrappedBody);
       } else {
         const requestPayload: Record<string, unknown> = { ...parsedBody };
+        sanitizeRequestPayloadParts(requestPayload);
 
         const rawGenerationConfig = requestPayload.generationConfig as Record<string, unknown> | undefined;
         const extraBody = requestPayload.extra_body as Record<string, unknown> | undefined;
@@ -1306,6 +1311,10 @@ export function prepareAntigravityRequest(
               CLAUDE_TOOL_SYSTEM_INSTRUCTION,
             );
           }
+
+          if (isClaude && options?.claudePromptAutoCaching) {
+            injectClaudePromptAutoCaching(requestPayload);
+          }
         }
 
         const conversationKey = resolveConversationKey(requestPayload);
@@ -1548,6 +1557,12 @@ export function prepareAntigravityRequest(
           }
         }
 
+        if (isClaude && options?.claudePromptAutoCaching) {
+          injectClaudePromptAutoCaching(requestPayload);
+        }
+
+        sanitizeRequestPayloadParts(requestPayload);
+
         const wrappedBody: Record<string, unknown> = {
           project: effectiveProjectId,
           model: effectiveModel,
@@ -1755,9 +1770,14 @@ export async function transformAntigravityResponse(
     });
   }
 
+  let fallbackText: string | undefined;
+  let fallbackHeaders: Headers | undefined;
+
   try {
     const headers = new Headers(response.headers);
-    const text = await response.text();
+    fallbackHeaders = headers;
+    const text = await response.clone().text();
+    fallbackText = text;
 
     if (!response.ok) {
       let errorBody;
@@ -1899,6 +1919,13 @@ export async function transformAntigravityResponse(
       error,
       note: "Failed to transform Antigravity response",
     });
+    if (fallbackText !== undefined) {
+      return new Response(fallbackText, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: fallbackHeaders ?? new Headers(response.headers),
+      });
+    }
     return response;
   }
 }

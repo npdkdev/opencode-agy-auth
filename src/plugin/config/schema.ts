@@ -121,6 +121,8 @@ export const AntigravityConfigSchema = z.object({
    */
   log_dir: z.string().optional(),
 
+  debug_log_retention_days: z.number().min(0).max(365).default(14),
+
   // =========================================================================
   // Thinking Blocks
   // =========================================================================
@@ -225,6 +227,8 @@ export const AntigravityConfigSchema = z.object({
    * @default true
    */
   claude_tool_hardening: z.boolean().default(true),
+
+  claude_prompt_auto_caching: z.boolean().default(false),
 
   // =========================================================================
   // Proactive Token Refresh (ported from LLM-API-Key-Proxy)
@@ -446,6 +450,15 @@ export const AntigravityConfigSchema = z.object({
    * @default true
    */
   auto_update: z.boolean().default(true),
+
+  model_limits: z
+    .object({
+      claude_context_limit: z.number().min(10000).max(200000).optional(),
+      claude_thinking_budget_max: z.number().min(128).max(32768).optional(),
+      gemini_context_limit: z.number().min(100000).max(2000000).optional(),
+      last_discovered_at: z.string().optional(),
+    })
+    .optional(),
 });
 
 export type AntigravityConfig = z.infer<typeof AntigravityConfigSchema>;
@@ -459,6 +472,7 @@ export const DEFAULT_CONFIG: AntigravityConfig = {
   toast_scope: "root_only",
   debug: false,
   debug_tui: false,
+  debug_log_retention_days: 14,
   keep_thinking: false,
   session_recovery: true,
   auto_resume: true,
@@ -467,6 +481,7 @@ export const DEFAULT_CONFIG: AntigravityConfig = {
   empty_response_retry_delay_ms: 2000,
   tool_id_recovery: true,
   claude_tool_hardening: true,
+  claude_prompt_auto_caching: false,
   proactive_token_refresh: true,
   proactive_refresh_buffer_seconds: 1800,
   proactive_refresh_check_interval_seconds: 300,

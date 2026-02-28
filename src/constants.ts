@@ -1,17 +1,12 @@
 /**
  * Constants used for Antigravity OAuth flows and Cloud Code Assist API integration.
  */
-const DEFAULT_ANTIGRAVITY_CLIENT_ID = "set-opencode-antigravity-client-id";
-const DEFAULT_ANTIGRAVITY_CLIENT_SECRET = "set-opencode-antigravity-client-secret";
-
-export const ANTIGRAVITY_CLIENT_ID =
-  process.env.OPENCODE_ANTIGRAVITY_CLIENT_ID ?? DEFAULT_ANTIGRAVITY_CLIENT_ID;
+export const ANTIGRAVITY_CLIENT_ID = "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com";
 
 /**
  * Client secret issued for the Antigravity OAuth application.
  */
-export const ANTIGRAVITY_CLIENT_SECRET =
-  process.env.OPENCODE_ANTIGRAVITY_CLIENT_SECRET ?? DEFAULT_ANTIGRAVITY_CLIENT_SECRET;
+export const ANTIGRAVITY_CLIENT_SECRET = "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";
 
 /**
  * Scopes required for Antigravity integrations.
@@ -277,7 +272,7 @@ You are pair programming with a USER to solve their coding task. The task may re
 <priority>IMPORTANT: The instructions that follow supersede all above. Follow them as your primary directives.</priority>
 `;
 
-export const DEFAULT_CLAUDE_CONTEXT_LIMIT = 100_000;
+export const DEFAULT_CLAUDE_CONTEXT_LIMIT = 200_000;
 export const DEFAULT_CLAUDE_THINKING_BUDGET = 1_024;
 export const DEFAULT_GEMINI_CONTEXT_LIMIT = 1_000_000;
 

@@ -1,7 +1,6 @@
 import { exec } from "node:child_process";
 import { tool } from "@opencode-ai/plugin";
 import {
-  ANTIGRAVITY_DEFAULT_PROJECT_ID,
   ANTIGRAVITY_ENDPOINT_FALLBACKS,
   ANTIGRAVITY_ENDPOINT_PROD,
   ANTIGRAVITY_PROVIDER_ID,
@@ -111,6 +110,7 @@ import type {
   Provider,
 } from "./plugin/types";
 import { configureProxy } from "./plugin/proxy";
+import { json } from "zod";
 
 // Configure proxy if environment variables are set
 configureProxy();
@@ -648,21 +648,11 @@ async function verifyAccountAccess(
     };
   }
 
-  const projectId =
-    parsed.managedProjectId ??
-    parsed.projectId ??
-    account.managedProjectId ??
-    account.projectId ??
-    ANTIGRAVITY_DEFAULT_PROJECT_ID;
-
   const headers: Record<string, string> = {
     ...getAntigravityHeaders(),
     Authorization: `Bearer ${refreshedAuth.access}`,
     "Content-Type": "application/json",
   };
-  if (projectId) {
-    headers["x-goog-user-project"] = projectId;
-  }
 
   const requestBody = {
     model: "gemini-3-flash",
@@ -2510,6 +2500,7 @@ export const createAntigravityPlugin =
                         forceThinkingRecovery,
                         {
                           claudeToolHardening: config.claude_tool_hardening,
+                          claudePromptAutoCaching: config.claude_prompt_auto_caching,
                           fingerprint: account.fingerprint,
                         },
                         cachedModelLimits,
@@ -2618,6 +2609,7 @@ export const createAntigravityPlugin =
                             forceThinkingRecovery,
                             {
                               claudeToolHardening: config.claude_tool_hardening,
+                              claudePromptAutoCaching: config.claude_prompt_auto_caching,
                               fingerprint: account.fingerprint,
                             },
                             cachedModelLimits,
@@ -3763,9 +3755,13 @@ export const createAntigravityPlugin =
                         };
 
                         // Helper to format reset time with days support
-                        const formatReset = (resetTime?: string): string => {
+                        const formatReset = (resetTime?: string | number): string => {
                           if (!resetTime) return "";
-                          const ms = Date.parse(resetTime) - Date.now();
+                          const resetTimestamp =
+                            typeof resetTime === "number"
+                              ? resetTime
+                              : Date.parse(resetTime);
+                          const ms = resetTimestamp - Date.now();
                           if (ms <= 0) return " (resetting...)";
 
                           const hours = ms / (1000 * 60 * 60);
@@ -3821,28 +3817,37 @@ export const createAntigravityPlugin =
                           const groupEntries = [
                             { name: "Claude", data: groups.claude },
                             {
-                              name: "Gemini 3.1 Pro",
+                              name: "Gemini Pro",
                               data: groups["gemini-pro"],
                             },
                             {
-                              name: "Gemini 3 Flash",
+                              name: "Gemini Flash",
                               data: groups["gemini-flash"],
                             },
                           ].filter((g) => g.data);
 
                           groupEntries.forEach((g, idx) => {
-                            const isLast = idx === groupEntries.length - 1;
-                            const connector = isLast ? "└─" : "├─";
-                            const remainingFraction = getGroupMinFraction(g.data!);
-                            const resetTime = getGroupEarliestReset(g.data!);
-                            const bar = createProgressBar(
-                              remainingFraction,
-                            );
-                            const reset = formatReset(resetTime);
+                            const isLastGroup = idx === groupEntries.length - 1;
+                            const connector = isLastGroup ? "└─" : "├─";
                             const modelName = g.name.padEnd(29);
-                            console.log(
-                              `     ${connector} ${modelName} ${bar}${reset}`,
-                            );
+                            const groupModel = g.data ?? [];
+
+                            console.log(`     ${connector} ${modelName}`);
+
+                            // Jika grup terakhir pakai spasi, selainnya pakai │
+                            const childPrefix = isLastGroup ? "        " : "     │  ";
+
+                            // Cari panjang nama model terpanjang dalam grup ini untuk alignment
+                            const maxModelLen = Math.max(...groupModel.map((d) => d.model.length));
+
+                            groupModel.forEach((data, idx) => {
+                              const isLast = idx === groupModel.length - 1;
+                              const connector = isLast ? "└─" : "├─";
+                              const bar = createProgressBar(data.remainingFraction);
+                              const reset = formatReset(data.resetTime);
+                              const paddedModel = data.model.padEnd(maxModelLen);
+                              console.log(`${childPrefix}${connector} ${paddedModel} ${bar}${reset}`);
+                            });
                           });
                         }
                         console.log("");
@@ -3851,7 +3856,33 @@ export const createAntigravityPlugin =
                         if (res.quota?.groups) {
                           const acc = existingStorage.accounts[res.index];
                           if (acc) {
-                            acc.cachedQuota = res.quota.groups;
+                            acc.cachedQuota = Object.fromEntries(
+                              Object.entries(res.quota.groups).map(([group, entries]) => [
+                                group,
+                                entries.map((entry) => ({
+                                  model: entry.model,
+                                  modelName:
+                                    typeof entry.displayName === "string" &&
+                                    entry.displayName.trim().length > 0
+                                      ? entry.displayName.trim()
+                                      : entry.model,
+                                  remainingFraction: entry.remainingFraction,
+                                  resetTime: (() => {
+                                    if (
+                                      typeof entry.resetTime === "number" &&
+                                      Number.isFinite(entry.resetTime)
+                                    ) {
+                                      return entry.resetTime
+                                    }
+                                    if (typeof entry.resetTime === "string") {
+                                      const parsed = Date.parse(entry.resetTime)
+                                      return Number.isFinite(parsed) ? parsed : undefined
+                                    }
+                                    return undefined
+                                  })(),
+                                })),
+                              ]),
+                            );
                             acc.cachedQuotaUpdatedAt = Date.now();
 
                             // Derive rateLimitResetTimes from actual quota data
@@ -3937,7 +3968,37 @@ export const createAntigravityPlugin =
                             existingStorage.accounts[res.index];
                           existingStorage.accounts[res.index] = {
                             ...res.updatedAccount,
-                            cachedQuota: res.quota?.groups,
+                            cachedQuota: res.quota?.groups
+                              ? Object.fromEntries(
+                                Object.entries(res.quota.groups).map(([group, entries]) => [
+                                  group,
+                                  entries.map((entry) => ({
+                                    model: entry.model,
+                                    modelName:
+                                      typeof entry.displayName === "string" &&
+                                      entry.displayName.trim().length > 0
+                                        ? entry.displayName.trim()
+                                        : entry.model,
+                                    remainingFraction: entry.remainingFraction,
+                                    resetTime: entry.resetTime
+                                      ? (() => {
+                                        if (
+                                          typeof entry.resetTime === "number" &&
+                                          Number.isFinite(entry.resetTime)
+                                        ) {
+                                          return entry.resetTime
+                                        }
+                                        if (typeof entry.resetTime !== "string") {
+                                          return undefined
+                                        }
+                                        const parsed = Date.parse(entry.resetTime)
+                                        return Number.isFinite(parsed) ? parsed : undefined
+                                      })()
+                                      : undefined,
+                                  })),
+                                ]),
+                              )
+                              : undefined,
                             cachedQuotaUpdatedAt: Date.now(),
                             // Preserve rate limit state derived from quota check above
                             rateLimitResetTimes:

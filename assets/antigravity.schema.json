@@ -24,9 +24,19 @@
       "type": "boolean",
       "description": "Enable debug logging to file. Env: OPENCODE_ANTIGRAVITY_DEBUG=1 (or =2 for verbose)"
     },
+    "debug_tui": {
+      "default": false,
+      "type": "boolean"
+    },
     "log_dir": {
       "type": "string",
       "description": "Custom directory for debug logs. Env: OPENCODE_ANTIGRAVITY_LOG_DIR=/path/to/logs"
+    },
+    "debug_log_retention_days": {
+      "default": 14,
+      "type": "number",
+      "minimum": 0,
+      "maximum": 365
     },
     "keep_thinking": {
       "default": false,
@@ -110,6 +120,10 @@
       "default": true,
       "type": "boolean",
       "description": "Enable tool hallucination prevention for Claude models. Injects parameter signatures and strict usage rules."
+    },
+    "claude_prompt_auto_caching": {
+      "default": false,
+      "type": "boolean"
     },
     "proactive_token_refresh": {
       "default": true,
@@ -207,7 +221,7 @@
       "description": "Maximum random jitter in milliseconds added to outgoing requests to avoid thundering herd."
     },
     "soft_quota_threshold_percent": {
-      "default": 90,
+      "default": 70,
       "type": "number",
       "minimum": 1,
       "maximum": 100,
@@ -328,32 +342,24 @@
     },
     "model_limits": {
       "type": "object",
-      "description": "Per-model context and thinking budget limits. Auto-discovered from Antigravity API on quota fetch. You can override manually, but values will be updated automatically when Google changes them.",
       "properties": {
         "claude_context_limit": {
-          "default": 100000,
           "type": "number",
           "minimum": 10000,
-          "maximum": 200000,
-          "description": "Hard context limit for Claude models on Antigravity. Auto-updated from API. Default: 100000 (observed: 102385)."
+          "maximum": 200000
         },
         "claude_thinking_budget_max": {
-          "default": 1024,
           "type": "number",
           "minimum": 128,
-          "maximum": 32768,
-          "description": "Maximum allowed thinkingBudget for Claude thinking models. Auto-updated from API quota response. Default: 1024 (Antigravity server value)."
+          "maximum": 32768
         },
         "gemini_context_limit": {
-          "default": 1000000,
           "type": "number",
           "minimum": 100000,
-          "maximum": 2000000,
-          "description": "Hard context limit for Gemini models. Auto-updated from API."
+          "maximum": 2000000
         },
         "last_discovered_at": {
-          "type": "string",
-          "description": "ISO timestamp of last auto-discovery from Antigravity API. Managed automatically."
+          "type": "string"
         }
       },
       "additionalProperties": false

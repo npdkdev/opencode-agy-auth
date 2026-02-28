@@ -596,7 +596,7 @@ describe("request.ts", () => {
       expect(headers.get("x-goog-user-project")).toBeNull();
     });
 
-    it("preserves x-goog-user-project header for gemini-cli headerStyle", () => {
+    it("removes x-goog-user-project header for gemini-cli headerStyle", () => {
       const result = prepareAntigravityRequest(
         "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
         { method: "POST", body: JSON.stringify({ contents: [] }), headers: { "x-goog-user-project": "my-project" } },
@@ -606,7 +606,154 @@ describe("request.ts", () => {
         "gemini-cli"
       );
       const headers = result.init.headers as Headers;
-      expect(headers.get("x-goog-user-project")).toBe("my-project");
+      expect(headers.get("x-goog-user-project")).toBeNull();
+    });
+
+    it("removes empty or invalid contents parts before forwarding", () => {
+      const result = prepareAntigravityRequest(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            contents: [
+              {
+                role: "user",
+                parts: [
+                  null,
+                  {},
+                  { text: "" },
+                  { type: "thinking" },
+                  { text: "keep-me" },
+                  { functionCall: { name: "lookup", args: {} } },
+                ],
+              },
+              {
+                role: "model",
+                parts: [
+                  { thought: true },
+                ],
+              },
+              {
+                role: "user",
+                parts: [],
+              },
+            ],
+          }),
+        },
+        mockAccessToken,
+        mockProjectId,
+      );
+
+      const wrapped = JSON.parse(result.init.body as string) as {
+        request?: { contents?: Array<{ parts?: unknown[] }> }
+      };
+      const contents = wrapped.request?.contents ?? [];
+
+      expect(contents).toHaveLength(1);
+      expect(contents[0]?.parts).toEqual([
+        { text: "keep-me" },
+        { functionCall: { name: "lookup", args: {} } },
+      ]);
+    });
+
+    it("removes invalid systemInstruction parts before forwarding", () => {
+      const result = prepareAntigravityRequest(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            contents: [{ role: "user", parts: [{ text: "hello" }] }],
+            systemInstruction: {
+              role: "user",
+              parts: [
+                null,
+                {},
+                { text: "" },
+                { type: "thinking" },
+                { text: "keep-system" },
+              ],
+            },
+          }),
+        },
+        mockAccessToken,
+        mockProjectId,
+      );
+
+      const wrapped = JSON.parse(result.init.body as string) as {
+        request?: { systemInstruction?: { parts?: Array<{ text?: string }> } }
+      };
+      const systemParts = wrapped.request?.systemInstruction?.parts ?? [];
+
+      expect(systemParts).toHaveLength(1);
+      expect(systemParts[0]?.text).toContain("keep-system");
+    });
+
+    it("injects ephemeral cache_control into Claude prompt blocks when enabled", () => {
+      const result = prepareAntigravityRequest(
+        "https://generativelanguage.googleapis.com/v1beta/models/claude-opus-4-6-thinking:generateContent",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            systemInstruction: {
+              role: "user",
+              parts: [{ text: "system prompt" }],
+            },
+            contents: [{ role: "user", parts: [{ text: "user prompt" }] }],
+          }),
+        },
+        mockAccessToken,
+        mockProjectId,
+        undefined,
+        "antigravity",
+        false,
+        {
+          claudePromptAutoCaching: true,
+        },
+      );
+
+      const wrapped = JSON.parse(result.init.body as string) as {
+        request?: {
+          systemInstruction?: { parts?: Array<{ cache_control?: { type?: string } }> };
+          contents?: Array<{ parts?: Array<{ cache_control?: { type?: string } }> }>;
+        }
+      };
+
+      const systemPart = wrapped.request?.systemInstruction?.parts?.[0];
+      const userPart = wrapped.request?.contents?.[0]?.parts?.[0];
+
+      expect(systemPart?.cache_control?.type).toBe("ephemeral");
+      expect(userPart?.cache_control?.type).toBe("ephemeral");
+    });
+
+    it("does not inject cache_control into Claude prompt blocks when disabled", () => {
+      const result = prepareAntigravityRequest(
+        "https://generativelanguage.googleapis.com/v1beta/models/claude-opus-4-6-thinking:generateContent",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            systemInstruction: {
+              role: "user",
+              parts: [{ text: "system prompt" }],
+            },
+            contents: [{ role: "user", parts: [{ text: "user prompt" }] }],
+          }),
+        },
+        mockAccessToken,
+        mockProjectId,
+      );
+
+      const wrapped = JSON.parse(result.init.body as string) as {
+        request?: {
+          systemInstruction?: { parts?: Array<{ cache_control?: { type?: string } }> };
+          contents?: Array<{ parts?: Array<{ cache_control?: { type?: string } }> }>;
+        }
+      };
+
+      const systemPart = wrapped.request?.systemInstruction?.parts?.[0];
+      const userPart = wrapped.request?.contents?.[0]?.parts?.[0];
+
+      expect(systemPart?.cache_control).toBeUndefined();
+      expect(userPart?.cache_control).toBeUndefined();
     });
 
     it("uses exact Code Assist headers for gemini-cli headerStyle", () => {

@@ -41,4 +41,16 @@ describe("Config Loader Environment Overrides", () => {
     const config = loadConfig("/tmp/nonexistent");
     expect(config.soft_quota_threshold_percent).toBe(30);
   });
+
+  it("overrides claude_prompt_auto_caching via env var", () => {
+    process.env.OPENCODE_ANTIGRAVITY_CLAUDE_PROMPT_AUTO_CACHING = "true";
+    const config = loadConfig("/tmp/nonexistent");
+    expect(config.claude_prompt_auto_caching).toBe(true);
+  });
+
+  it("overrides debug_log_retention_days via env var", () => {
+    process.env.OPENCODE_ANTIGRAVITY_DEBUG_LOG_RETENTION_DAYS = "21";
+    const config = loadConfig("/tmp/nonexistent");
+    expect(config.debug_log_retention_days).toBe(21);
+  });
 });

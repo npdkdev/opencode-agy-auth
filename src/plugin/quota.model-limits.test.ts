@@ -24,7 +24,7 @@ describe("quota model limits", () => {
     const modelLimits = await readModelLimits(configDir);
 
     expect(modelLimits).toEqual({
-      claude_context_limit: 100000,
+      claude_context_limit: 200000,
       claude_thinking_budget_max: 1024,
       gemini_context_limit: 1000000,
     });
@@ -78,7 +78,7 @@ describe("quota model limits", () => {
     const configPath = path.join(configDir, "antigravity.json");
     const existing = {
       model_limits: {
-        claude_context_limit: 100000,
+        claude_context_limit: 200000,
         claude_thinking_budget_max: 1024,
         gemini_context_limit: 1000000,
       },
@@ -88,7 +88,7 @@ describe("quota model limits", () => {
     const before = await fs.readFile(configPath, "utf-8");
 
     const quotaModels = new Map<string, { inputTokenLimit?: number; thinkingBudgetMax?: number }>([
-      ["antigravity-claude-sonnet-4-6-thinking", { inputTokenLimit: 100000, thinkingBudgetMax: 1024 }],
+      ["antigravity-claude-sonnet-4-6-thinking", { inputTokenLimit: 200000, thinkingBudgetMax: 1024 }],
       ["antigravity-gemini-3.1-pro", { inputTokenLimit: 1000000 }],
     ]);
     await discoverAndPersistModelLimits(configDir, quotaModels);

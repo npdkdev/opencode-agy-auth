@@ -22,8 +22,9 @@ export type QuotaGroup = "claude" | "gemini-pro" | "gemini-flash";
 
 export interface QuotaModelEntry {
   model: string;
+  displayName?: string;
   remainingFraction: number;
-  resetTime?: string;
+  resetTime?: string | number;
 }
 
 export interface QuotaSummary {
@@ -105,13 +106,30 @@ function normalizeRemainingFraction(value: unknown): number {
   return value;
 }
 
-function parseResetTime(resetTime?: string): number | null {
+function parseResetTime(resetTime?: string | number): number | null {
+  if (typeof resetTime === "number") {
+    return Number.isFinite(resetTime) ? resetTime : null
+  }
+
   if (!resetTime) return null;
   const timestamp = Date.parse(resetTime);
   if (!Number.isFinite(timestamp)) {
     return null;
   }
   return timestamp;
+}
+
+function formatResetTime(resetTime?: string | number): string | undefined {
+  if (typeof resetTime === "string") {
+    return parseResetTime(resetTime) === null ? undefined : resetTime
+  }
+
+  if (typeof resetTime === "number" && Number.isFinite(resetTime)) {
+    const date = new Date(resetTime)
+    return Number.isFinite(date.getTime()) ? date.toISOString() : undefined
+  }
+
+  return undefined
 }
 
 function classifyQuotaGroup(modelName: string, displayName?: string): QuotaGroup | null {
@@ -125,6 +143,41 @@ function classifyQuotaGroup(modelName: string, displayName?: string): QuotaGroup
   }
   const family = getModelFamily(modelName);
   return family === "gemini-flash" ? "gemini-flash" : "gemini-pro";
+}
+
+const QUOTA_FAMILY_MODEL_NAMES = new Set([
+  "claude",
+  "gemini",
+  "gemini-pro",
+  "gemini-flash",
+]);
+
+function isConcreteQuotaModelName(modelName: string): boolean {
+  const normalized = modelName.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  if (QUOTA_FAMILY_MODEL_NAMES.has(normalized)) {
+    return false;
+  }
+  return /^[a-z0-9][a-z0-9._-]*$/.test(normalized);
+}
+
+function resolveQuotaEntryModelName(modelKey: string, entry: FetchAvailableModelEntry): string {
+  const candidates = [entry.modelName, modelKey];
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && isConcreteQuotaModelName(candidate)) {
+      return candidate;
+    }
+  }
+
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim().length > 0) {
+      return candidate.trim();
+    }
+  }
+
+  return modelKey;
 }
 
 export function getGroupMinFraction(entries: QuotaModelEntry[]): number | undefined {
@@ -155,7 +208,7 @@ export function getGroupEarliestReset(entries: QuotaModelEntry[]): string | unde
 
       if (earliestTimestamp === undefined || parsedTime < earliestTimestamp) {
         earliestTimestamp = parsedTime;
-        earliestTime = entry.resetTime;
+        earliestTime = formatResetTime(entry.resetTime);
       }
     }
 
@@ -193,8 +246,16 @@ function aggregateQuota(models?: Record<string, FetchAvailableModelEntry>): Quot
       groups[group] = [];
     }
 
+    const resolvedModelName = resolveQuotaEntryModelName(modelName, entry);
+
+    const displayName =
+      typeof entry.displayName === "string" && entry.displayName.trim().length > 0
+        ? entry.displayName.trim()
+        : undefined
+
     groups[group]?.push({
-      model: modelName,
+      model: resolvedModelName,
+      displayName,
       remainingFraction,
       resetTime: parsedResetTime === null ? undefined : resetTime,
     });
