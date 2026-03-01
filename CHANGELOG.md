@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.1.1] - 2026-03-01
+
+### Fixed
+
+- Fixed recurring `400 INVALID_ARGUMENT` from Antigravity (`Unknown name "cache_control"`) by stripping unsupported `cache_control`/`cacheControl` at request top-level and nested parts before forwarding.
+- Updated Claude auto-caching behavior to avoid forwarding invalid `cache_control` fields in Antigravity payloads while keeping request sanitization strict for wrapped and non-wrapped bodies.
+
 ## [2.1.0] - 2026-03-01
 
 ### Added

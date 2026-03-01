@@ -688,7 +688,7 @@ describe("request.ts", () => {
       expect(systemParts[0]?.text).toContain("keep-system");
     });
 
-    it("injects ephemeral cache_control into Claude prompt blocks when enabled", () => {
+    it("does not forward cache_control when Claude auto caching is enabled", () => {
       const result = prepareAntigravityRequest(
         "https://generativelanguage.googleapis.com/v1beta/models/claude-opus-4-6-thinking:generateContent",
         {
@@ -713,6 +713,7 @@ describe("request.ts", () => {
 
       const wrapped = JSON.parse(result.init.body as string) as {
         request?: {
+          cache_control?: { type?: string };
           systemInstruction?: { parts?: Array<{ cache_control?: { type?: string } }> };
           contents?: Array<{ parts?: Array<{ cache_control?: { type?: string } }> }>;
         }
@@ -721,8 +722,9 @@ describe("request.ts", () => {
       const systemPart = wrapped.request?.systemInstruction?.parts?.[0];
       const userPart = wrapped.request?.contents?.[0]?.parts?.[0];
 
-      expect(systemPart?.cache_control?.type).toBe("ephemeral");
-      expect(userPart?.cache_control?.type).toBe("ephemeral");
+      expect(wrapped.request?.cache_control).toBeUndefined();
+      expect(systemPart?.cache_control).toBeUndefined();
+      expect(userPart?.cache_control).toBeUndefined();
     });
 
     it("does not inject cache_control into Claude prompt blocks when disabled", () => {
@@ -744,6 +746,7 @@ describe("request.ts", () => {
 
       const wrapped = JSON.parse(result.init.body as string) as {
         request?: {
+          cache_control?: { type?: string };
           systemInstruction?: { parts?: Array<{ cache_control?: { type?: string } }> };
           contents?: Array<{ parts?: Array<{ cache_control?: { type?: string } }> }>;
         }
@@ -752,8 +755,78 @@ describe("request.ts", () => {
       const systemPart = wrapped.request?.systemInstruction?.parts?.[0];
       const userPart = wrapped.request?.contents?.[0]?.parts?.[0];
 
+      expect(wrapped.request?.cache_control).toBeUndefined();
       expect(systemPart?.cache_control).toBeUndefined();
       expect(userPart?.cache_control).toBeUndefined();
+    });
+
+    it("strips top-level cache_control from wrapped requests", () => {
+      const wrappedPayload = {
+        project: mockProjectId,
+        model: "claude-opus-4-6-thinking",
+        request: {
+          cache_control: { type: "ephemeral" },
+          contents: [{ role: "user", parts: [{ text: "hello" }] }],
+          systemInstruction: {
+            role: "user",
+            parts: [{ text: "sys" }],
+          },
+        },
+      };
+
+      const result = prepareAntigravityRequest(
+        "https://generativelanguage.googleapis.com/v1beta/models/claude-opus-4-6-thinking:generateContent",
+        {
+          method: "POST",
+          body: JSON.stringify(wrappedPayload),
+        },
+        mockAccessToken,
+        mockProjectId,
+        undefined,
+        "antigravity",
+      );
+
+      const transformed = JSON.parse(result.init.body as string) as {
+        request?: { cache_control?: { type?: string } }
+      };
+
+      expect(transformed.request?.cache_control).toBeUndefined();
+    });
+
+    it("strips cache_control fields from parts before sending to antigravity", () => {
+      const result = prepareAntigravityRequest(
+        "https://generativelanguage.googleapis.com/v1beta/models/claude-opus-4-6-thinking:generateContent",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            contents: [
+              {
+                role: "user",
+                parts: [{ text: "user prompt", cache_control: { type: "ephemeral" } }],
+              },
+            ],
+            system_instruction: {
+              role: "user",
+              parts: [{ text: "system prompt", cache_control: { type: "ephemeral" } }],
+            },
+          }),
+        },
+        mockAccessToken,
+        mockProjectId,
+      );
+
+      const wrapped = JSON.parse(result.init.body as string) as {
+        request?: {
+          contents?: Array<{ parts?: Array<{ cache_control?: { type?: string } }> }>;
+          system_instruction?: { parts?: Array<{ cache_control?: { type?: string } }> };
+        }
+      };
+
+      const userPart = wrapped.request?.contents?.[0]?.parts?.[0];
+      const systemPart = wrapped.request?.system_instruction?.parts?.[0];
+
+      expect(userPart?.cache_control).toBeUndefined();
+      expect(systemPart?.cache_control).toBeUndefined();
     });
 
     it("uses exact Code Assist headers for gemini-cli headerStyle", () => {

@@ -1452,6 +1452,9 @@ const NON_PAYLOAD_KEYS = new Set([
   "thought",
   "type",
   "role",
+  "cache_control",
+  "cacheControl",
+  "providerOptions",
 ])
 
 const CORE_PAYLOAD_KEYS = [
@@ -1520,10 +1523,19 @@ function hasMeaningfulPartPayload(part: Record<string, unknown>): boolean {
   return false
 }
 
+function sanitizePartObject(part: Record<string, unknown>): Record<string, unknown> {
+  const sanitized = { ...part }
+  delete sanitized.cache_control
+  delete sanitized.cacheControl
+  delete sanitized.providerOptions
+  return sanitized
+}
+
 function sanitizePartsArray(parts: unknown[]): Record<string, unknown>[] {
   return parts
     .filter((part): part is Record<string, unknown> => isPlainRecord(part))
     .filter((part) => hasMeaningfulPartPayload(part))
+    .map((part) => sanitizePartObject(part))
 }
 
 function sanitizeSystemInstruction(
@@ -1553,6 +1565,9 @@ function sanitizeSystemInstruction(
 export function sanitizeRequestPayloadParts(
   payload: Record<string, unknown>,
 ): void {
+  delete payload.cache_control
+  delete payload.cacheControl
+
   if (Array.isArray(payload.contents)) {
     const sanitizedContents = (payload.contents as unknown[])
       .filter((content): content is Record<string, unknown> => isPlainRecord(content))
@@ -1574,6 +1589,21 @@ export function sanitizeRequestPayloadParts(
       .filter((content) => content !== null)
 
     payload.contents = sanitizedContents
+  }
+
+  if (Array.isArray(payload.messages)) {
+    payload.messages = (payload.messages as unknown[])
+      .filter((message): message is Record<string, unknown> => isPlainRecord(message))
+      .map((message) => {
+        if (!Array.isArray(message.content)) {
+          return message
+        }
+
+        return {
+          ...message,
+          content: sanitizePartsArray(message.content),
+        }
+      })
   }
 
   const systemInstruction = sanitizeSystemInstruction(payload.systemInstruction)
@@ -2943,95 +2973,11 @@ export function injectToolHardeningInstruction(
   }
 }
 
-function injectEphemeralCacheControl(part: Record<string, unknown>): void {
-  if (
-    part.cache_control &&
-    typeof part.cache_control === "object" &&
-    !Array.isArray(part.cache_control)
-  ) {
-    return
-  }
-
-  part.cache_control = { type: "ephemeral" }
-}
-
-function shouldAutoCachePart(part: Record<string, unknown>): boolean {
-  if (part.type === "thinking" || part.thought === true) {
-    return false
-  }
-
-  if (typeof part.text === "string" && part.text.trim().length > 0) {
-    return true
-  }
-
-  if (part.type === "text") {
-    const textValue = part.text
-    if (typeof textValue === "string" && textValue.trim().length > 0) {
-      return true
-    }
-  }
-
-  return false
-}
-
-function autoCacheParts(parts: unknown): void {
-  if (!Array.isArray(parts)) {
-    return
-  }
-
-  for (const part of parts) {
-    if (!part || typeof part !== "object" || Array.isArray(part)) {
-      continue
-    }
-
-    const record = part as Record<string, unknown>
-    if (!shouldAutoCachePart(record)) {
-      continue
-    }
-
-    injectEphemeralCacheControl(record)
-  }
-}
-
 export function injectClaudePromptAutoCaching(
   payload: Record<string, unknown>,
 ): void {
-  const systemInstruction = payload.systemInstruction
-  if (systemInstruction && typeof systemInstruction === "object") {
-    const parts = (systemInstruction as Record<string, unknown>).parts
-    autoCacheParts(parts)
-  }
-
-  if (Array.isArray(payload.contents)) {
-    for (const item of payload.contents) {
-      if (!item || typeof item !== "object" || Array.isArray(item)) {
-        continue
-      }
-
-      const content = item as Record<string, unknown>
-      const role = content.role
-      if (role === "model" || role === "assistant") {
-        continue
-      }
-
-      autoCacheParts(content.parts)
-    }
-  }
-
-  if (Array.isArray(payload.messages)) {
-    for (const item of payload.messages) {
-      if (!item || typeof item !== "object" || Array.isArray(item)) {
-        continue
-      }
-
-      const message = item as Record<string, unknown>
-      const role = message.role
-      if (role === "assistant" || role === "model") {
-        continue
-      }
-
-      autoCacheParts(message.content)
-    }
+  if (payload.cache_control === undefined && payload.cacheControl === undefined) {
+    payload.cache_control = { type: "ephemeral" }
   }
 }
 
